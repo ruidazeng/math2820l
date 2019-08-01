@@ -1,0 +1,163 @@
+---
+title: "Counties at risk for police killings based on racial composition and GDP"
+author: "Jeffrey Cheng, Ruida Zeng, & Arjun Bansal"
+date: "4/7/2019"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+INTRODUCTION: We analyzed a data set we found on fivethirtyeight on police killings throughout the United States and tried to find some correlations between the number of police killings and the racial composition and GDP of each location which we differentiated with their unique FIPS code. We used our results to look at the data sets of demographic data and identify which counties are at risk for police killings. This project will be useful to someone because it could help them figure out appropriate places for them to live if safety is of high priority to them. It could also be useful to city governments in evaluating how much training regarding self-defense needs to be given to their police force.
+
+DATA: Our police killings data was obtained from fivethirtyeight and contains all unintentional killings of people by police in 2015 along with name, county, and various county statistics. The GCP_Release_1 dataset countains a list of all the counties in the US with their GDP for 4 categories: total, private goods, private services, and government. The cc-est2017-alldata dataset contains population estimates for every county with categories of total population, white male, white female, black male, black female, etc.
+
+```{r}
+library(fivethirtyeight)
+library(tidyverse)
+library(dplyr)
+library(choroplethr)
+library(choroplethrMaps)
+library(ggplot2)
+
+
+#load data
+data("police_killings")
+data("df_pop_county")
+gdp_data <- read.csv("~/Desktop/Math 2820/GCP_Release_1.csv")
+race_data <- read.csv("~/Desktop/Math 2820/cc-est2017-alldata.csv")
+
+
+#examine data
+head(police_killings)
+dim(police_killings)
+
+
+#showing killings on map 
+kills_df <- data.frame(region = police_killings$county_id, value = 1)
+county_df <- data.frame(region = df_pop_county$region, value = 0)
+complete_kills_df <- rbind(kills_df, county_df)
+complete_kills_df <- distinct(complete_kills_df, region, .keep_all = TRUE)
+county_choropleth(complete_kills_df, 
+                  title  = "Locations of killings by US police in 2015", num_colors = 1)
+```
+
+There are only 467 killings for the year 2015. They are in very high density in Southern California and New Mexico. Other than that, the highest concentration is in counties in the South and Southeast of the US.
+```{r}
+#visualizing data
+ggplot(police_killings, aes(x=share_white)) + geom_bar(binwidth = 10) + labs(x = "% White", y = "Frequency") + ggtitle("Frequency of Killing vs. % White")
+
+ggplot(police_killings, aes(x=share_hispanic)) + geom_bar(binwidth = 10) + labs(x = "% Hispanic", y = "Frequency") + ggtitle("Frequency of Killing vs. % Hipsanic")
+
+ggplot(police_killings, aes(x=share_black)) + geom_bar(binwidth = 10) + labs(x = "% Black", y = "Frequency") + ggtitle("Frequency of Killing vs. % Black")
+```
+
+It's clear that higher white populations are correlated with killings up to a critical point of around 90-100%. Also, populations with low populations of black and hispanic people have more killings. The curve appears to be exponential for the black and hispanic populations.
+```{r}
+#adding a kill variable
+police_killings <- police_killings %>%
+  mutate(kill = 1)
+
+#filtering to the year we want
+race_data <- race_data %>%
+  filter(YEAR == 5, AGEGRP == 3)
+
+#In the BEA data, populations are given as raw numbers so we had to calculate proportions on our own
+race_data <- race_data %>%
+  mutate(kill = 0, county_fp = STATE * 1000 + COUNTY, share_white = ((WA_MALE + WA_FEMALE) / TOT_POP) * 100, share_black = ((BA_MALE + BA_FEMALE) / TOT_POP) * 100, share_hispanic = ((H_MALE + H_FEMALE) / TOT_POP) * 100)
+
+#created two data frames with the data we want
+police_df <- data.frame(county_fp = police_killings$county_id, share_white = police_killings$share_white, share_black = police_killings$share_black, share_hispanic = police_killings$share_hispanic, kill = police_killings$kill)
+race_df <- data.frame(county_fp = race_data$county_fp, share_white = race_data$share_white, share_black = race_data$share_black, share_hispanic = race_data$share_hispanic, kill = race_data$kill)
+
+#appends both data frames together on top of each other
+all_race_data <- rbind(police_df, race_df)
+
+#removes duplicate counties
+all_race_data <- distinct(all_race_data, county_fp, .keep_all = TRUE)
+
+
+#race models
+white_model <- lm(kill ~ share_white, all_race_data)
+summary(white_model)
+
+black_model <- lm(kill ~ share_black, all_race_data)
+summary(black_model)
+
+hispanic_model <- lm(kill ~ share_hispanic, all_race_data)
+summary(hispanic_model)
+```
+White model: R^2 = 0.12, has a slightly negative slope. This is likely due to the anomaly at the very right end of the data when share of white population is 90-100%, the amount of killings is very low.
+
+Black model: R^2 = 0.01, has a slightly positive slope. This low R^2 value is because the data is not linear and we cannot use black proportion as a predictor for killings. 
+
+Hispanic model: R^2 = 0.01 as well, has a slightly positive slope. This low R^2 value is because the data is not linear and we cannot use black proportion as a predictor for killings. 
+
+From these three, if we were to use one race population as a predictor for killings, white would be the best one.
+```{r}
+confint(white_model)
+confint(black_model)
+confint(hispanic_model)
+```
+
+The 95% confidence interval for our white model has all negative values, so we can see that by this model, increasing white population has negative effect on killings. In a linear model, this is likely due to the huge drop in killings once white population because 90-100% of the population. We can see that if a linear model is used, increasing white population leads to less killings.
+
+The 95% confidence interval for our black and hispanic models have all positive values, so we can see that by this model, increasing black and hispanic populations have positive effect on killings. From this, we can see that if a linear model is used, increasing black and hispanic populations leads to more killings. 
+
+Overall, all 3 race models are not very useful to us. 
+```{r}
+#mutating data sets to model economic data
+gdp_data <- gdp_data %>%
+  filter(LineData==1)
+police_econ_df <- data.frame(county_fp = police_killings$county_id, kill = 1)
+gdp_econ_df <- data.frame(county_fp = gdp_data$FIPS, kill = 0, gdp = gdp_data$gdp)
+all_gdp_data <- full_join(police_econ_df, gdp_econ_df, by = "county_fp")
+head(all_gdp_data)
+all_gdp_data <- all_gdp_data %>%
+  mutate(kill = (kill.x + kill.y))
+
+#plot of gdp vs kills
+ggplot(all_gdp_data, aes(x=gdp, y = kill)) + geom_point() + labs(x = "County GDP", y = "Kill") + ggtitle("GDP of Counties with Killings")
+```
+
+Its clear to see that most of the kills are in counties with lower GDP. Specifically, counties with a GDP of less than 150,000,000 are at much higher risk.
+```{r}
+#economic models
+gdp_model <- lm(kill ~ gdp, all_gdp_data)
+summary(gdp_model)
+confint(gdp_model)
+```
+This model works decently well: much better than all the race models due to its R^2 value of 0.5. However, the 95% confidence interval has both positive and negative values, so we cannot be sure that gdp has a negative relationship with killings. 
+
+Because we are still curious about having a combined model, we will try a model using both share white and GDP.
+```{r}
+#combining variables
+all_data <- full_join(all_gdp_data, all_race_data, by = "county_fp")
+head(all_data)
+all_data <- all_data %>%
+  mutate(kill = (kill.x + kill.y))
+
+
+#combined model
+combined_model <- lm(kill + share_white ~ gdp, all_data)
+summary(combined_model)
+
+```
+This model is better than all the race models, but still not as good as only GDP because of the problem with kill ~ white not actually being linear. We will not do a confidence interval for this model because of potential correlation between the variables.
+
+If we want to do a linear model, the best way to predict killings by race would be to go off share white because of its R^2 value of 0.12 and definitively negative correlation with killings from our 95% confidence interval. However, this is clearly wrong: clearly increase in white proportion leads to increasing numbers of kills until white proportion is 90-100% of the population so our data is not well modeled by a linear model. The best model to use would likely be the GDP model to predict killings in specific counties.
+```{r}
+#showing at risk counties on map
+at_risk <- all_data %>%
+  filter(share_white > 70, share_white < 90, gdp < 150000000)
+atrisk_df <- data.frame(region = at_risk$county_fp, value = 1)
+counties_df <- data.frame(region = df_pop_county$region, value = 0)
+complete_risk_df <- rbind(atrisk_df, county_df)
+complete_risk_df <- distinct(complete_risk_df, region, .keep_all = TRUE)
+county_choropleth(complete_risk_df, 
+                  title  = "Locations of at risk counties for killings", num_colors = 1)
+```
+
+In conclusion, the at risk counties are generally in poorer areas with high, but not all, white populations. We think more concrete anlyses could have been attempted on a data set with more kills because the number of kills compared to the number of counties is extremely small. Perhaps a future experiment could aggregate killing data from multiple years to get more data points. We think that the killings go up as white population increases because of racism and historical animosity against communities of color, but decreases sharply as white populations get up to 90-100% because those populations are predominantly white and would be less vulnerable to racist behavior. This also makes sense with the GDP data: less wealthy counties would typically be more conservative. 
